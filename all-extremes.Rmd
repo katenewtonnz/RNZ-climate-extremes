@@ -1,0 +1,226 @@
+---
+title: "Auckland rain days"
+author: "Kate Newton"
+date: "10 June 2020"
+output: 
+  html_document: 
+    toc: yes
+---
+
+This R markdown file creates a series of animated plots to show the projected changes in hot days (max temperature over 25 degrees) and rain days (days where >=1mm of rain falls) in nine different New Zealand locations, over a period covering 1972 and 2100, using data from New Zealand's climate research agency NIWA.
+
+```{r load libraries, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(viridis)
+library(gganimate)
+library(extrafont) #only load if you want to use custom fonts
+#library(ggiraphExtra) #uncomment this line if this package loads for you - it wouldn't for me - solution in next step
+
+```
+
+## Create coord_radar function
+
+It's possible to create the spiral plots in this project by using the coord_polar function in ggplot, but this results in curved lines in the plots that I think are misleading (in that they suggest there are data points that don't exist). The coord_radar function in the ggiraphExtra package takes care of this by plotting straight lines between points on a polar axis; however I couldn't get the package to install. The following step is a work-around I created by calling [ggiraphExtra's documentation of the coord_radar function](https://www.rdocumentation.org/packages/ggiraphExtra/versions/0.2.9/topics/ggRadar) as a separate script.
+
+```{r Optional: call coord_radar function, message=FALSE, warning=FALSE}
+
+source("scripts/coord_radar_function.R")
+
+```
+
+## Importing projected data
+
+NIWA's [Our Future Climates website](https://ofcnz.niwa.co.nz/#/localCharts) provides a download option on the charts page. Data for each location can be downloaded by season (which can be selected in the menu on the left). The menu also provides options for six climate models and the four representative climate pathways (RCPs), but all models and all RCPS are included in the seasonal .csvs by default. I manually downloaded each seasonal .csv - these are stored (with the original file names) in /raw-data.
+
+NB: As well as projected future data, OFCNZ also projects *backwards* to 1970. NIWA has confirmed these historical projections are bias-corrected and so do not exactly match the actual recorded measurements for each location. My initial versions of this analysis and data visualisation used observed measurements for each location/station for the historical portion of the time series - which allowed plotting much further back into the historical record (back to the early 20th century in some cases). However, following advice from NIWA I have used the projected historical data, to avoid mixing and matching. This still provides 50 years of the historical record, which is sufficient to observe recent climatic changes.
+
+```{r Get projected data, message=FALSE, warning=FALSE}
+
+# create list of files
+
+mydir = "raw-data/ofc-data"
+myfiles = list.files(path=mydir, pattern="*.csv", full.names=TRUE)
+
+# read in and combine into single df
+
+extremes_data <- do.call("rbind", lapply(myfiles, function(x) {
+  dat <- read.csv(x, header=TRUE)
+  dat$town_type_season <- tools::file_path_sans_ext(basename(x))
+  dat
+}))
+
+# some formatting (so I don't have to fiddle round changing labels later) and separate the column containing the file name into three separate variables that can be used to filter on later
+
+extremes_data <- extremes_data %>% 
+  separate(town_type_season, c("town", "type", "season"), sep = "_") %>% 
+  mutate(season = str_to_title(season), 
+         town = str_to_title(town))
+
+# re-order towns North to South (this will make sure they plot in the correct order for facted grids - which I ended up not using but leaving the code here anyway because \_(ツ)_/¯ )
+
+extremes_data$town <- factor(extremes_data$town, levels = c("Whangarei", "Auckland", "Napier", "Wellington", "Nelson", "Westport", "Christchurch", "Dunedin", "Queenstown"))
+
+# keep only the six-model average data columns (NIWA recommends using this average if wanting to use a single model only)
+
+extremes_data <- extremes_data[, c(1,8,15,22,29:32)]
+
+# Combine four RCPs into a single variable (I've only plotted RCP8.5 because it's closest to the current global trajectory)
+
+extremes_data <- extremes_data %>% 
+  gather(model, days, 2:5) %>% 
+  mutate(model = str_remove_all(model, "ENS.AV_"))
+
+# Get rid of 1971 because almost all of the summer data is missing
+
+extremes_data <- extremes_data %>% 
+  filter(Year>1971)
+
+# Re-factor to make sure seasons plot in chronological order:
+
+extremes_data$season <- factor(extremes_data$season, levels = c("Summer", "Autumn", "Winter", "Spring"))
+
+extremes_data$days <- as.numeric(extremes_data$days) # has coerced to character vector because of missing data in first row of summer df
+
+# for some reason the plot will only work if the data is coerced to a grouped df, so this is a bit of fake code I'm using to trick it.
+
+extremes_data <- extremes_data %>% 
+  group_by(Year, town, type, season, model) %>% 
+  summarise(days=mean(days))
+
+```
+
+## Visualising data
+
+```{r A static radar plot}
+
+# Test a static plot first
+
+extremes_data %>% 
+  filter(model=="RCP8.5" & town=="Whangarei" & type=="wd") %>% 
+  ggplot(aes(season, days, group=Year, color=Year)) +
+  geom_polygon(fill = NA, size = 1) + 
+  coord_radar() + 
+  scale_color_viridis_c(option = "viridis", guide = guide_colorbar(ticks = F, title.position = "top", title.hjust = 0.5, title.theme = element_text(size=10), label.theme = element_text(size=8)), limits = c(1972, 2100), breaks = c(1972, 2100)) + 
+  theme_minimal() + 
+  scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) + 
+  theme(legend.position = "bottom") + 
+  ggtitle(paste("Wet days each season:", as.character(extremes_data$town)))
+
+```
+
+## Animating visualisations
+
+The final stage is to animate the data so it plays through year-by-year. The year label at the top makes the legend unnecessary; I've also got rid of the y-axis (which gets replaced with annotations on the rings of the plot in Photoshop - using annotations() throws off the 90-degree angles in the plots for reasons I can't explain). 
+
+```{r add animation}
+
+# test code before looping
+
+whangarei_wet <- extremes_data %>% 
+  filter(model=="RCP8.5" & town=="Whangarei" & type=="wd") %>% 
+  ggplot(aes(season, days, group=Year, color=Year)) +
+  geom_polygon(fill = NA, size = 1) + 
+  coord_radar() + 
+  scale_color_viridis_c(option = "D") + 
+  theme_minimal(base_family = "Verdana") + 
+  scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) + 
+  theme(axis.text.x = element_text(size = 12, face = "bold"), 
+        axis.title = element_blank(), 
+        plot.title = element_text(size = 14, face = "bold"), 
+        plot.subtitle = element_text(size = 12), 
+        legend.position = "bottom") + 
+  gganimate::transition_time(Year) + 
+  shadow_mark() + 
+  labs(title = paste("Wet days each season:", as.character(extremes_data$town)), subtitle = "Year: {frame_time}")
+
+animate(whangarei_wet, nframes = 160, fps = 5, width = 600, height = 700, end_pause = 30, renderer = gifski_renderer(loop = T))
+
+
+```
+
+## Wet day gifs
+
+First graph the wet days. I haven't quite got the file-naming worked out, so they'll save as "rain_1.gif", "rain_2.gif" etc, but because I know the code is looping over the towns in the factor order I created earlier, it's easy enough to work out that "rain_1.gif" is Whangarei and so on. To double-check this, un-comment the first line of code in the following chunk.
+
+
+```{r wet day animations}
+
+# print(levels(extremes_data$town))
+
+rain_graph <- function(df){
+  town_list <- unique(df$town)
+  
+  for (i in seq_along(town_list)){
+    plot <- df %>% 
+      filter(model=="RCP8.5" & type=="wd" & town==town_list[i]) %>% 
+      ggplot(aes(season, days, group=Year, color=Year)) + 
+      geom_polygon(fill = NA, size = 1) + 
+      coord_radar() + 
+      scale_color_viridis_c(option = "viridis", guide = guide_colorbar(ticks = F, title.position = "top", title.hjust = 0.5, title.theme = element_text(size=12), label.theme = element_text(size=10)), limits = c(1972, 2100), breaks = c(1972, 2100)) + 
+      theme_minimal(base_family = "Verdana") + 
+      scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) + 
+      theme(axis.text.x = element_text(size = 12, face = "bold"), 
+            axis.title = element_blank(), 
+            plot.title = element_text(size = 14, face = "bold"), 
+            plot.subtitle = element_text(size = 12), 
+            legend.position = "bottom") + 
+      gganimate::transition_time(Year) + 
+      shadow_mark() + 
+      labs(title = "Wet days each season", subtitle = "Year: {frame_time}")
+    
+    animate(plot, nframes = 160, fps = 5, width = 600, height = 700, end_pause = 30, renderer = gifski_renderer(loop = T))
+    
+    file_name = paste("rain_", i, ".gif", sep="")
+    
+    anim_save(file_name, last_animation())
+    
+  }
+}
+
+rain_graph(extremes_data)
+
+
+```
+
+## Hot day gifs
+
+Repeat the process, but rename the function and tweak the filter to type=="t25" and change the viridis palette. I've also set the lower limit for the y-axis at -20, to improve the readability of the plots - most of the winter values for each town are 0 hot days, which results in a bunch of triangular plots, where the data point for winter is at the centre of the radar on each year-cycle, making the plot cross directly from autumn to spring (via the centre of the plot). To my eye, this is more confusing than shifting 0 out along the y-axis.
+
+```{r hot days animations}
+
+hot_graph <- function(df){
+  town_list <- unique(df$town)
+  
+  for (i in seq_along(town_list)){
+    plot <- df %>% 
+      filter(model=="RCP8.5" & type=="t25" & town==town_list[i]) %>% 
+      ggplot(aes(season, days, group=Year, color=Year)) + 
+      geom_polygon(fill = NA, size = 1) + 
+      coord_radar() + 
+      scale_color_viridis_c(option = "plasma", guide = guide_colorbar(ticks = F, title.position = "top", title.hjust = 0.5, title.theme = element_text(size=12), label.theme = element_text(size=10)), limits = c(1972, 2100), breaks = c(1972, 2100)) + 
+      theme_minimal(base_family = "Verdana") + 
+      scale_y_continuous(expand = c(0, 0), limits = c(-20, NA)) + 
+      theme(axis.text.x = element_text(size = 12, face = "bold"), 
+            axis.title = element_blank(), 
+            plot.title = element_text(size = 14, face = "bold"), 
+            plot.subtitle = element_text(size = 12), 
+            legend.position = "bottom") + 
+      gganimate::transition_time(Year) + 
+      shadow_mark() + 
+      labs(title = "Hot days each season", subtitle = "Year: {frame_time}")
+    
+    animate(plot, nframes = 160, fps = 5, width = 600, height = 700, end_pause = 30, renderer = gifski_renderer(loop = T))
+    
+    file_name = paste("hot_", i, ".gif", sep="")
+    
+    anim_save(file_name, last_animation())
+    
+  }
+}
+
+hot_graph(extremes_data)
+
+```
+
