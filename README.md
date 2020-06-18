@@ -1,6 +1,6 @@
 # RNZ climate extremes: Plotting NIWA's future climate projections for New Zealand
 
-This is the repo for the data analysis and visualisations included in the feature story [Climate extremes](https://www.rnz.co.nz/stories/2018750899/climate-extremes) published by RNZ's [In Depth section](https://www.radionz.co.nz/news/in-depth) on 18 June, 2020.
+This is the repo for the data analysis and visualisations included in the feature story [Beyond reasonable drought: New Zealand's climate future](https://www.rnz.co.nz/stories/2018750899/climate-extremes) published by RNZ's [In Depth section](https://www.radionz.co.nz/news/in-depth) on 18 June, 2020.
 
 It contains the data and code used to analyse projected changes in 'hot days' (days over 25 degrees Celsisu) and 'rain days' (days with 1mm or more of rain) in New Zealand between 1972 and 2100. It also contains analysis of the data from NIWA's Drought Monitor, along with the code for the visualisations that accompanied the final story.
 
